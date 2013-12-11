@@ -12,6 +12,7 @@
 // - Transactions style messaging can be modeled on top using frame tags.
 // - Lightweight API on top of libdispatch (aka GCD) -- close to the metal.
 //
+#import <Foundation/Foundation.h>
 #include <dispatch/dispatch.h>
 
 // Special frame tag that signifies "no tag". Your implementation should never
@@ -28,7 +29,7 @@ NSString *PTProtocolErrorDomain;
 @interface PTProtocol : NSObject
 
 // Queue on which to run data processing blocks.
-@property dispatch_queue_t queue;
+@property(nonatomic, weak) dispatch_queue_t queue;
 
 // Get the shared protocol object for *queue*
 + (PTProtocol*)sharedProtocolForQueue:(dispatch_queue_t)queue;

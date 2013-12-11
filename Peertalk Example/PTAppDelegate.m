@@ -209,6 +209,7 @@
 }
 
 - (void)ioFrameChannel:(PTChannel*)channel didEndWithError:(NSError*)error {
+  NSLog(@"Disconnected error: %@", error);
   if (connectedDeviceID_ && [connectedDeviceID_ isEqualToNumber:channel.userInfo]) {
     [self didDisconnectFromDevice:connectedDeviceID_];
   }

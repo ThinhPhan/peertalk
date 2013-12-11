@@ -27,8 +27,6 @@ typedef struct _PTFrame {
 
 @interface PTProtocol () {
   uint32_t nextFrameTag_;
-  @public
-  dispatch_queue_t queue_;
 }
 - (dispatch_data_t)createDispatchDataWithFrameOfType:(uint32_t)type frameTag:(uint32_t)frameTag payload:(dispatch_data_t)payload;
 @end
@@ -37,16 +35,15 @@ typedef struct _PTFrame {
 static void _release_queue_local_protocol(void *objcobj) {
   if (objcobj) {
     PTProtocol *protocol = (__bridge_transfer id)objcobj;
-    protocol->queue_ = NULL;
+    protocol.queue = nil;
   }
 }
 
 
+// TODO: remove
 @interface RQueueLocalIOFrameProtocol : PTProtocol
 @end
 @implementation RQueueLocalIOFrameProtocol
-- (void)setQueue:(dispatch_queue_t)queue {
-}
 @end
 
 
@@ -58,8 +55,7 @@ static void _release_queue_local_protocol(void *objcobj) {
   //dispatch_queue_t queue = dispatch_get_current_queue();
   PTProtocol *currentQueueFrameProtocol = (__bridge PTProtocol*)dispatch_queue_get_specific(queue, &currentQueueFrameProtocolKey);
   if (!currentQueueFrameProtocol) {
-    currentQueueFrameProtocol = [[RQueueLocalIOFrameProtocol alloc] initWithDispatchQueue:NULL];
-    currentQueueFrameProtocol->queue_ = queue; // reference, no retain, since we would create cyclic references
+    currentQueueFrameProtocol = [[RQueueLocalIOFrameProtocol alloc] initWithDispatchQueue:queue];
     dispatch_queue_set_specific(queue, &currentQueueFrameProtocolKey, (__bridge_retained void*)currentQueueFrameProtocol, &_release_queue_local_protocol);
     return (__bridge PTProtocol*)dispatch_queue_get_specific(queue, &currentQueueFrameProtocolKey); // to avoid race conds
   } else {
@@ -70,32 +66,13 @@ static void _release_queue_local_protocol(void *objcobj) {
 
 - (id)initWithDispatchQueue:(dispatch_queue_t)queue {
   if (!(self = [super init])) return nil;
-  queue_ = queue;
-  if (queue_) dispatch_retain(queue_);
+  _queue = queue;
   return self;
 }
 
 - (id)init {
-  return [self initWithDispatchQueue:dispatch_get_current_queue()];
+  return [self initWithDispatchQueue:dispatch_get_main_queue()];
 }
-
-- (void)dealloc {
-  if (queue_) {
-    dispatch_release(queue_);
-  }
-}
-
-- (dispatch_queue_t)queue {
-  return queue_;
-}
-
-- (void)setQueue:(dispatch_queue_t)queue {
-  dispatch_queue_t prev_queue = queue_;
-  queue_ = queue;
-  if (queue_) dispatch_retain(queue_);
-  if (prev_queue) dispatch_release(prev_queue);
-}
-
 
 - (uint32_t)newTag {
   return ++nextFrameTag_;
@@ -120,14 +97,13 @@ static void _release_queue_local_protocol(void *objcobj) {
     frame->payloadSize = 0;
   }
   
-  dispatch_data_t frameData = dispatch_data_create((const void*)frame, sizeof(PTFrame), queue_, ^{
+  dispatch_data_t frameData = dispatch_data_create((const void*)frame, sizeof(PTFrame), _queue, ^{
     CFAllocatorDeallocate(kCFAllocatorDefault, (void*)frame);
   });
   
   if (payload && frame->payloadSize != 0) {
     // chain frame + payload
     dispatch_data_t data = dispatch_data_create_concat(frameData, payload);
-    dispatch_release(frameData);
     frameData = data;
   }
   
@@ -141,12 +117,11 @@ static void _release_queue_local_protocol(void *objcobj) {
 
 - (void)sendFrameOfType:(uint32_t)frameType tag:(uint32_t)tag withPayload:(dispatch_data_t)payload overChannel:(dispatch_io_t)channel callback:(void(^)(NSError*))callback {
   dispatch_data_t frame = [self createDispatchDataWithFrameOfType:frameType frameTag:tag payload:payload];
-  dispatch_io_write(channel, 0, frame, queue_, ^(bool done, dispatch_data_t data, int _errno) {
+  dispatch_io_write(channel, 0, frame, _queue, ^(bool done, dispatch_data_t data, int _errno) {
     if (done && callback) {
       callback(_errno == 0 ? nil : [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:_errno userInfo:nil]);
     }
   });
-  dispatch_release(frame);
 }
 
 
@@ -157,18 +132,15 @@ static void _release_queue_local_protocol(void *objcobj) {
 - (void)readFrameOverChannel:(dispatch_io_t)channel callback:(void(^)(NSError *error, uint32_t frameType, uint32_t frameTag, uint32_t payloadSize))callback {
   __block dispatch_data_t allData = NULL;
   
-  dispatch_io_read(channel, 0, sizeof(PTFrame), queue_, ^(bool done, dispatch_data_t data, int error) {
+  dispatch_io_read(channel, 0, sizeof(PTFrame), _queue, ^(bool done, dispatch_data_t data, int error) {
     //NSLog(@"dispatch_io_read: done=%d data=%p error=%d", done, data, error);
     size_t dataSize = data ? dispatch_data_get_size(data) : 0;
     
     if (dataSize) {
       if (!allData) {
         allData = data;
-        dispatch_retain(allData);
       } else {
-        dispatch_data_t allDataPrev = allData;
         allData = dispatch_data_create_concat(allData, data);
-        dispatch_release(allDataPrev);
       }
     }
     
@@ -184,7 +156,6 @@ static void _release_queue_local_protocol(void *objcobj) {
       }
       
       if (!allData || dispatch_data_get_size(allData) < sizeof(PTFrame)) {
-        if (allData) dispatch_release(allData);
         callback([[NSError alloc] initWithDomain:PTProtocolErrorDomain code:0 userInfo:nil], 0, 0, 0);
         return;
       }
@@ -193,7 +164,6 @@ static void _release_queue_local_protocol(void *objcobj) {
       size_t size = 0;
       
       dispatch_data_t contiguousData = dispatch_data_create_map(allData, (const void **)&frame, &size);
-      dispatch_release(allData);
       if (!contiguousData) {
         callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:ENOMEM userInfo:nil], 0, 0, 0);
         return;
@@ -208,8 +178,6 @@ static void _release_queue_local_protocol(void *objcobj) {
         frame->payloadSize = ntohl(frame->payloadSize);
         callback(nil, frame->type, frame->tag, frame->payloadSize);
       }
-      
-      dispatch_release(contiguousData);
     }
   });
 }
@@ -217,30 +185,25 @@ static void _release_queue_local_protocol(void *objcobj) {
 
 - (void)readPayloadOfSize:(size_t)payloadSize overChannel:(dispatch_io_t)channel callback:(void(^)(NSError *error, dispatch_data_t contiguousData, const uint8_t *buffer, size_t bufferSize))callback {
   __block dispatch_data_t allData = NULL;
-  dispatch_io_read(channel, 0, payloadSize, queue_, ^(bool done, dispatch_data_t data, int error) {
+  dispatch_io_read(channel, 0, payloadSize, _queue, ^(bool done, dispatch_data_t data, int error) {
     //NSLog(@"dispatch_io_read: done=%d data=%p error=%d", done, data, error);
     size_t dataSize = dispatch_data_get_size(data);
     
     if (dataSize) {
       if (!allData) {
         allData = data;
-        dispatch_retain(allData);
       } else {
-        dispatch_data_t allDataPrev = allData;
         allData = dispatch_data_create_concat(allData, data);
-        dispatch_release(allDataPrev);
       }
     }
     
     if (done) {
       if (error != 0) {
-        if (allData) dispatch_release(allData);
         callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:error userInfo:nil], NULL, NULL, 0);
         return;
       }
       
       if (dataSize == 0) {
-        if (allData) dispatch_release(allData);
         callback(nil, NULL, NULL, 0);
         return;
       }
@@ -251,7 +214,7 @@ static void _release_queue_local_protocol(void *objcobj) {
       
       if (allData) {
         contiguousData = dispatch_data_create_map(allData, (const void **)&buffer, &bufferSize);
-        dispatch_release(allData); allData = NULL;
+        allData = NULL;
         if (!contiguousData) {
           callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:ENOMEM userInfo:nil], NULL, NULL, 0);
           return;
@@ -259,14 +222,14 @@ static void _release_queue_local_protocol(void *objcobj) {
       }
       
       callback(nil, contiguousData, buffer, bufferSize);
-      if (contiguousData) dispatch_release(contiguousData);
+      contiguousData = NULL;
     }
   });
 }
 
 
 - (void)readAndDiscardDataOfSize:(size_t)size overChannel:(dispatch_io_t)channel callback:(void(^)(NSError*, BOOL))callback {
-  dispatch_io_read(channel, 0, size, queue_, ^(bool done, dispatch_data_t data, int error) {
+  dispatch_io_read(channel, 0, size, _queue, ^(bool done, dispatch_data_t data, int error) {
     if (done && callback) {
       size_t dataSize = dispatch_data_get_size(data);
       callback(error == 0 ? nil : [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:error userInfo:nil], dataSize == 0);
@@ -289,20 +252,16 @@ static void _release_queue_local_protocol(void *objcobj) {
 @end
 
 
-@interface _PTDispatchData : NSObject {
-  dispatch_data_t dispatchData_;
-}
+@interface _PTDispatchData : NSObject
+@property (strong) dispatch_data_t dispatchData;
 @end
 @implementation _PTDispatchData
 - (id)initWithDispatchData:(dispatch_data_t)dispatchData {
   if (!(self = [super init])) return nil;
-  dispatchData_ = dispatchData;
-  dispatch_retain(dispatchData_);
+  _dispatchData = dispatchData;
   return self;
 }
-- (void)dealloc {
-  if (dispatchData_) dispatch_release(dispatchData_);
-}
+
 @end
 
 @implementation NSData (PTProtocol)
@@ -311,7 +270,7 @@ static void _release_queue_local_protocol(void *objcobj) {
   // Note: The queue is used to submit the destructor. Since we only perform an
   // atomic release of self, it doesn't really matter which queue is used, thus
   // we use the current calling queue.
-  return dispatch_data_create((const void*)self.bytes, self.length, dispatch_get_current_queue(), ^{
+  return dispatch_data_create((const void*)self.bytes, self.length, dispatch_get_main_queue(), ^{
     // trick to have the block capture the data, thus retain/releasing
     [self length];
   });
@@ -330,7 +289,6 @@ static void _release_queue_local_protocol(void *objcobj) {
   
   _PTDispatchData *dispatchDataRef = [[_PTDispatchData alloc] initWithDispatchData:contiguousData];
   NSData *newData = [NSData dataWithBytesNoCopy:(void*)buffer length:bufferSize freeWhenDone:NO];
-  dispatch_release(contiguousData);
   static const bool kDispatchDataRefKey;
   objc_setAssociatedObject(newData, (const void*)kDispatchDataRefKey, dispatchDataRef, OBJC_ASSOCIATION_RETAIN);
   
@@ -365,7 +323,6 @@ static void _release_queue_local_protocol(void *objcobj) {
     return nil;
   }
   NSDictionary *dict = [NSPropertyListSerialization propertyListWithData:[NSData dataWithBytesNoCopy:(void*)buffer length:bufferSize freeWhenDone:NO] options:NSPropertyListImmutable format:NULL error:nil];
-  dispatch_release(contiguousData);
   return dict;
 }
 

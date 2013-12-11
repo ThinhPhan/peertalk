@@ -16,10 +16,10 @@
 @interface PTChannel : NSObject
 
 // Delegate
-@property (strong) id<PTChannelDelegate> delegate;
+@property (nonatomic, weak) id<PTChannelDelegate> delegate;
 
 // Communication protocol. Must not be nil.
-@property PTProtocol *protocol;
+@property (strong) PTProtocol *protocol;
 
 // YES if this channel is a listening server
 @property (readonly) BOOL isListening;
@@ -83,7 +83,7 @@
 // valid until *dispatchData* is deallocated (normally when the receiver is
 // deallocated).
 @interface PTData : NSObject
-@property (readonly) dispatch_data_t dispatchData;
+@property (readonly, strong) dispatch_data_t dispatchData;
 @property (readonly) void *data;
 @property (readonly) size_t length;
 @end
@@ -92,9 +92,9 @@
 // Represents a peer's address
 @interface PTAddress : NSObject
 // For network addresses, this is the IP address in textual format
-@property (readonly) NSString *name;
+@property (readonly, strong) NSString *name;
 // For network addresses, this is the port number. Otherwise 0 (zero).
-@property (readonly) NSInteger port;
+@property (readonly, assign) NSInteger port;
 @end
 
 

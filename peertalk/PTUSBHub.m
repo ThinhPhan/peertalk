@@ -112,7 +112,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
 // connectToDevice:port:callback:). You should not create channels yourself, but
 // let PTUSBHub provide you with already configured channels.
 @interface PTUSBChannel : NSObject {
-  dispatch_io_t channel_;
+  dispatch_io_t _channel;
   dispatch_queue_t queue_;
   uint32_t nextPacketTag_;
   NSMutableDictionary *responseQueue_;
@@ -163,9 +163,8 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
 @end
 
 
-@interface PTUSBHub () {
-  PTUSBChannel *channel_;
-}
+@interface PTUSBHub ()
+@property (strong) PTUSBChannel *channel;
 - (void)handleBroadcastPacket:(NSDictionary*)packet;
 @end
 
@@ -178,32 +177,25 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
     gSharedHub = [PTUSBHub new];
-    [gSharedHub listenOnQueue:dispatch_get_main_queue() onStart:^(NSError *error) {
-      if (error) {
-        NSLog(@"PTUSBHub failed to initialize: %@", error);
-      }
-    } onEnd:nil];
+    [gSharedHub listenOnQueue:dispatch_get_main_queue()
+                      onStart:^(NSError *error) {
+                        if (error) {
+                          NSLog(@"PTUSBHub failed to initialize: %@", error);
+                        }
+                      } onEnd:nil];
   });
   return gSharedHub;
 }
 
-
-- (id)init {
-  if (!(self = [super init])) return nil;
-  
-  return self;
-}
-
-
 - (void)listenOnQueue:(dispatch_queue_t)queue onStart:(void(^)(NSError*))onStart onEnd:(void(^)(NSError*))onEnd {
-  if (channel_) {
+  if (_channel) {
     if (onStart) onStart(nil);
     return;
   }
-  channel_ = [PTUSBChannel new];
+  _channel = [PTUSBChannel new];
   NSError *error = nil;
-  if ([channel_ openOnQueue:queue error:&error onEnd:onEnd]) {
-    [channel_ listenWithBroadcastHandler:^(NSDictionary *packet) { [self handleBroadcastPacket:packet]; } callback:onStart];
+  if ([_channel openOnQueue:queue error:&error onEnd:onEnd]) {
+    [_channel listenWithBroadcastHandler:^(NSDictionary *packet) { [self handleBroadcastPacket:packet]; } callback:onStart];
   } else if (onStart) {
     onStart(error);
   }
@@ -214,7 +206,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
   PTUSBChannel *channel = [PTUSBChannel new];
   NSError *error = nil;
   
-  if (![channel openOnQueue:dispatch_get_current_queue() error:&error onEnd:onEnd]) {
+  if (![channel openOnQueue:dispatch_get_main_queue() error:&error onEnd:onEnd]) {
     onStart(error, nil);
     return;
   }
@@ -230,7 +222,9 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
   [channel sendRequest:packet callback:^(NSError *error_, NSDictionary *responsePacket) {
     NSError *error = error_;
     [channel errorFromPlistResponse:responsePacket error:&error];
-    onStart(error, (error ? nil : channel.dispatchChannel) );
+    if (onStart) {
+      onStart(error, (error ? nil : channel.dispatchChannel));
+    }
   }];
 }
 
@@ -287,41 +281,24 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
   return packet;
 }
 
-
-- (id)init {
-  if (!(self = [super init])) return nil;
-  
-  return self;
-}
-
-
-- (void)dealloc {
-  //NSLog(@"dealloc %@", self);
-  if (channel_) {
-    dispatch_release(channel_);
-    channel_ = nil;
-  }
-}
-
-
 - (BOOL)valid {
-  return !!channel_;
+  return !!_channel;
 }
 
 
 - (dispatch_io_t)dispatchChannel {
-  return channel_;
+  return _channel;
 }
 
 
 - (dispatch_fd_t)fileDescriptor {
-  return dispatch_io_get_descriptor(channel_);
+  return dispatch_io_get_descriptor(_channel);
 }
 
 
 - (BOOL)openOnQueue:(dispatch_queue_t)queue error:(NSError**)error onEnd:(void(^)(NSError*))onEnd {
-  assert(channel_ == nil);
-  queue_ = queue ? queue : dispatch_get_current_queue();
+  assert(_channel == nil);
+  queue_ = queue ? queue : dispatch_get_main_queue();
   
   // Create socket
   dispatch_fd_t fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -344,7 +321,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
     return NO;
   }
   
-  channel_ = dispatch_io_create(DISPATCH_IO_STREAM, fd, queue_, ^(int error) {
+  _channel = dispatch_io_create(DISPATCH_IO_STREAM, fd, queue_, ^(int error) {
     close(fd);
     if (onEnd) {
       onEnd(error == 0 ? nil : [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:error userInfo:nil]);
@@ -462,7 +439,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
   static usbmux_packet_t ref_upacket;
   isReadingPackets_ = YES;
   
-  dispatch_io_read(channel_, 0, sizeof(ref_upacket.size), queue_, ^(bool done, dispatch_data_t data, int error) {
+  dispatch_io_read(_channel, 0, sizeof(ref_upacket.size), queue_, ^(bool done, dispatch_data_t data, int error) {
     //NSLog(@"dispatch_io_read 0,4: done=%d data=%p error=%d", done, data, error);
     
     if (!done)
@@ -481,7 +458,6 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
     dispatch_data_t map_data = dispatch_data_create_map(data, (const void **)&buffer, &buffer_size);
     assert(buffer_size == sizeof(ref_upacket.size));
     memcpy((void *)&(upacket_len), (const void *)buffer, buffer_size);
-    dispatch_release(map_data);
     
     // Allocate a new usbmux_packet_t for the expected size
     uint32_t payloadLength = upacket_len - sizeof(usbmux_packet_t);
@@ -489,7 +465,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
     
     // Read rest of the incoming usbmux_packet_t
     off_t offset = sizeof(ref_upacket.size);
-    dispatch_io_read(channel_, offset, upacket->size - offset, queue_, ^(bool done, dispatch_data_t data, int error) {
+    dispatch_io_read(_channel, offset, upacket->size - offset, queue_, ^(bool done, dispatch_data_t data, int error) {
       //NSLog(@"dispatch_io_read X,Y: done=%d data=%p error=%d", done, data, error);
       
       if (!done)
@@ -509,8 +485,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
       dispatch_data_t map_data = dispatch_data_create_map(data, (const void **)&buffer, &buffer_size);
       assert(buffer_size == upacket->size - offset);
       memcpy(((void *)(upacket))+offset, (const void *)buffer, buffer_size);
-      dispatch_release(map_data);
-      
+
       // We only support plist protocol
       if (upacket->protocol != USBMuxPacketProtocolPlist) {
         callback([[NSError alloc] initWithDomain:PTUSBHubErrorDomain code:0 userInfo:[NSDictionary dictionaryWithObject:@"Unexpected package protocol" forKey:NSLocalizedDescriptionKey]], nil, upacket->tag);
@@ -566,7 +541,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
 
 - (void)sendDispatchData:(dispatch_data_t)data callback:(void(^)(NSError*))callback {
   off_t offset = 0;
-  dispatch_io_write(channel_, offset, data, queue_, ^(bool done, dispatch_data_t data, int _errno) {
+  dispatch_io_write(_channel, offset, data, queue_, ^(bool done, dispatch_data_t data, int _errno) {
     //NSLog(@"dispatch_io_write: done=%d data=%p error=%d", done, data, error);
     if (!done)
       return;
@@ -576,7 +551,6 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
       callback(err);
     }
   });
-  dispatch_release(data); // Release our ref. A ref is still held by dispatch_io_write
 }
 
 
@@ -590,7 +564,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
 
 
 - (void)readFromOffset:(off_t)offset length:(size_t)length callback:(void(^)(NSError *error, dispatch_data_t data))callback {
-  dispatch_io_read(channel_, offset, length, queue_, ^(bool done, dispatch_data_t data, int _errno) {
+  dispatch_io_read(_channel, offset, length, queue_, ^(bool done, dispatch_data_t data, int _errno) {
     if (!done)
       return;
     
@@ -605,15 +579,15 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
 
 
 - (void)cancel {
-  if (channel_) {
-    dispatch_io_close(channel_, 0);
+  if (_channel) {
+    dispatch_io_close(_channel, 0);
   }
 }
 
 
 - (void)stop {
-  if (channel_) {
-    dispatch_io_close(channel_, DISPATCH_IO_STOP);
+  if (_channel) {
+    dispatch_io_close(_channel, DISPATCH_IO_STOP);
   }
 }
 
