@@ -41,13 +41,6 @@
 static const uint8_t kUserInfoKey;
 
 #pragma mark -
-@interface PTData ()
-@property (strong) dispatch_data_t dispatchData;
-
-- (id)initWithMappedDispatchData:(dispatch_data_t)mappedContiguousData data:(void*)data length:(size_t)length;
-@end
-
-#pragma mark -
 @interface PTAddress () {
   struct sockaddr_storage sockaddr_;
 }
@@ -463,18 +456,20 @@ static const uint8_t kUserInfoKey;
           }
         }];
       } else {
-        [_protocol readPayloadOfSize:payloadSize overChannel:channel callback:^(NSError *error, dispatch_data_t contiguousData, const uint8_t *buffer, size_t bufferSize) {
-          if (handleError(error, bufferSize == 0)) {
-            return;
-          }
+        [_protocol readPayloadOfSize:payloadSize
+                         overChannel:channel
+                            callback:^(NSError *error,
+                                       dispatch_data_t contiguousData) {
+                              if (handleError(error, dispatch_data_get_size(contiguousData) == 0)) {
+                                return;
+                              }
           
-          if (_delegate) {
-            PTData *payload = [[PTData alloc] initWithMappedDispatchData:contiguousData data:(void*)buffer length:bufferSize];
-            [_delegate ioFrameChannel:self didReceiveFrameOfType:type tag:tag payload:payload];
-          }
-          
-          resumeReadingFrames();
-        }];
+                              if (_delegate) {
+                                
+                                [_delegate ioFrameChannel:self didReceiveFrameOfType:type tag:tag payload:contiguousData];
+                              }
+                              resumeReadingFrames();
+                            }];
       }
     }
   }];
@@ -560,33 +555,3 @@ static const uint8_t kUserInfoKey;
 }
 
 @end
-
-
-#pragma mark -
-@implementation PTData
-
-@synthesize dispatchData = dispatchData_;
-@synthesize data = data_;
-@synthesize length = length_;
-
-- (id)initWithMappedDispatchData:(dispatch_data_t)mappedContiguousData data:(void*)data length:(size_t)length {
-  if (!(self = [super init])) return nil;
-  dispatchData_ = mappedContiguousData;
-  data_ = data;
-  length_ = length;
-  return self;
-}
-
-- (void)dealloc {
-  data_ = NULL;
-  length_ = 0;
-}
-
-#pragma mark - NSObject
-
-- (NSString*)description {
-  return [NSString stringWithFormat:@"<PTData: %p (%zu bytes)>", self, length_];
-}
-
-@end
-

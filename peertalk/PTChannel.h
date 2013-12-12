@@ -10,7 +10,7 @@
 #import "PTProtocol.h"
 #import "PTUSBHub.h"
 
-@class PTData, PTAddress;
+@class PTAddress;
 @protocol PTChannelDelegate;
 
 @interface PTChannel : NSObject
@@ -79,16 +79,6 @@
 @end
 
 
-// Wraps a mapped dispatch_data_t object. The memory pointed to by *data* is
-// valid until *dispatchData* is deallocated (normally when the receiver is
-// deallocated).
-@interface PTData : NSObject
-@property (readonly, strong) dispatch_data_t dispatchData;
-@property (readonly) void *data;
-@property (readonly) size_t length;
-@end
-
-
 // Represents a peer's address
 @interface PTAddress : NSObject
 // For network addresses, this is the IP address in textual format
@@ -103,7 +93,7 @@
 
 @required
 // Invoked when a new frame has arrived on a channel.
-- (void)ioFrameChannel:(PTChannel*)channel didReceiveFrameOfType:(uint32_t)type tag:(uint32_t)tag payload:(PTData*)payload;
+- (void)ioFrameChannel:(PTChannel*)channel didReceiveFrameOfType:(uint32_t)type tag:(uint32_t)tag payload:(dispatch_data_t)payload;
 
 @optional
 // Invoked to accept an incoming frame on a channel. Reply NO ignore the

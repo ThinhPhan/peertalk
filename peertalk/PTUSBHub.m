@@ -85,7 +85,7 @@ static usbmux_packet_t *usbmux_packet_create(USBMuxPacketProtocol protocol, USBM
   upacket->tag = tag;
   
   if (payload && payloadSize) {
-    usbmux_packet_set_payload(upacket, payload, payloadSize);
+    usbmux_packet_set_payload(upacket, payload, (uint32_t)payloadSize);
   }
   
   return upacket;
@@ -359,7 +359,7 @@ static NSString *kPlistPacketTypeConnect = @"Connect";
       return NO;
     }
     
-    USBMuxReplyCode replyCode = n.integerValue;
+    USBMuxReplyCode replyCode = (uint32_t)[n integerValue];
     if (replyCode != 0) {
       NSString *errmessage = @"Unspecified error";
       switch (replyCode) {

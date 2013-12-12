@@ -87,9 +87,7 @@ NSString *PTProtocolErrorDomain;
 - (void)readPayloadOfSize:(size_t)payloadSize
               overChannel:(dispatch_io_t)channel
                  callback:(void(^)(NSError *error,
-                                   dispatch_data_t contiguousData,
-                                   const uint8_t *buffer,
-                                   size_t bufferSize))callback;
+                                   dispatch_data_t contiguousData))callback;
 
 // Discard data of *size* waiting on *channel*. *callback* can be NULL.
 - (void)readAndDiscardDataOfSize:(size_t)size

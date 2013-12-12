@@ -183,7 +183,9 @@ static void _release_queue_local_protocol(void *objcobj) {
 }
 
 
-- (void)readPayloadOfSize:(size_t)payloadSize overChannel:(dispatch_io_t)channel callback:(void(^)(NSError *error, dispatch_data_t contiguousData, const uint8_t *buffer, size_t bufferSize))callback {
+- (void)readPayloadOfSize:(size_t)payloadSize
+              overChannel:(dispatch_io_t)channel
+                 callback:(void(^)(NSError *error, dispatch_data_t contiguousData))callback {
   __block dispatch_data_t allData = NULL;
   dispatch_io_read(channel, 0, payloadSize, _queue, ^(bool done, dispatch_data_t data, int error) {
     //NSLog(@"dispatch_io_read: done=%d data=%p error=%d", done, data, error);
@@ -199,12 +201,12 @@ static void _release_queue_local_protocol(void *objcobj) {
     
     if (done) {
       if (error != 0) {
-        callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:error userInfo:nil], NULL, NULL, 0);
+        callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:error userInfo:nil], NULL);
         return;
       }
       
       if (dataSize == 0) {
-        callback(nil, NULL, NULL, 0);
+        callback(nil, NULL);
         return;
       }
       
@@ -216,12 +218,12 @@ static void _release_queue_local_protocol(void *objcobj) {
         contiguousData = dispatch_data_create_map(allData, (const void **)&buffer, &bufferSize);
         allData = NULL;
         if (!contiguousData) {
-          callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:ENOMEM userInfo:nil], NULL, NULL, 0);
+          callback([[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:ENOMEM userInfo:nil], NULL);
           return;
         }
       }
       
-      callback(nil, contiguousData, buffer, bufferSize);
+      callback(nil, contiguousData);
       contiguousData = NULL;
     }
   });
