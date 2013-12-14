@@ -79,7 +79,10 @@
 - (IBAction)sendMessage:(id)sender {
   if (connectedChannel_) {
     NSString *message = self.inputTextField.stringValue;
-    dispatch_data_t payload = PTExampleTextDispatchDataWithString(message);
+    NSData *data = [message dataUsingEncoding:NSUTF8StringEncoding];
+    dispatch_data_t payload = dispatch_data_create([data bytes], [data length], nil, ^{
+      [data length];
+    });
     [connectedChannel_ sendFrameOfType:PTExampleFrameTypeTextMessage tag:PTFrameNoTag withPayload:payload callback:^(NSError *error) {
       if (error) {
         NSLog(@"Failed to send message: %@", error);
@@ -193,15 +196,22 @@
   }
 }
 
-- (void)ioFrameChannel:(PTChannel*)channel didReceiveFrameOfType:(uint32_t)type tag:(uint32_t)tag payload:(PTData*)payload {
+- (void)ioFrameChannel:(PTChannel*)channel
+ didReceiveFrameOfType:(uint32_t)type
+                   tag:(uint32_t)tag
+               payload:(dispatch_data_t)payload {
   //NSLog(@"received %@, %u, %u, %@", channel, type, tag, payload);
   if (type == PTExampleFrameTypeDeviceInfo) {
-    NSDictionary *deviceInfo = [NSDictionary dictionaryWithContentsOfDispatchData:payload.dispatchData];
+    NSDictionary *deviceInfo = [NSDictionary dictionaryWithContentsOfDispatchData:payload];
     [self presentMessage:[NSString stringWithFormat:@"Connected to %@", deviceInfo.description] isStatus:YES];
   } else if (type == PTExampleFrameTypeTextMessage) {
-    PTExampleTextFrame *textFrame = (PTExampleTextFrame*)payload.data;
-    textFrame->length = ntohl(textFrame->length);
-    NSString *message = [[NSString alloc] initWithBytes:textFrame->utf8text length:textFrame->length encoding:NSUTF8StringEncoding];
+    size_t dataSize = dispatch_data_get_size(payload);
+    NSMutableData *data = [NSMutableData dataWithCapacity:dataSize];
+    dispatch_data_apply(payload, ^bool(dispatch_data_t region, size_t offset, const void *buffer, size_t size) {
+      [data appendBytes:buffer length:size];
+      return YES;
+    });
+    NSString *message = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     [self presentMessage:[NSString stringWithFormat:@"[%@]: %@", channel.userInfo, message] isStatus:NO];
   } else if (type == PTExampleFrameTypePong) {
     [self pongWithTag:tag error:nil];
